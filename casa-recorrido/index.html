@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>100 Boulder Rd — Recorrido</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; }
+  body { font-family: system-ui,-apple-system,sans-serif; background:#0e1620; }
+  canvas { display:block; }
+  #frameTop,#frameBottom { position:fixed; left:0; right:0; height:5px; z-index:10; pointer-events:none; }
+  #frameTop { top:0; background:linear-gradient(90deg,#e0a458,#3a6e8f); }
+  #frameBottom { bottom:0; background:linear-gradient(90deg,#3a6e8f,#e0a458); }
+
+  /* pantalla de inicio / instrucciones */
+  #start {
+    position:fixed; inset:0; z-index:30; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:30px;
+    background:radial-gradient(circle at 50% 35%, #243447 0%, #0e1620 75%);
+    cursor:pointer; transition:opacity .4s;
+  }
+  #start.hide { opacity:0; pointer-events:none; }
+  #start .eyebrow { color:#e0a458; font-size:11px; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; }
+  #start h1 { color:#eef2f5; font-size:30px; font-weight:600; margin-bottom:6px; }
+  #start h2 { color:#8ea3b5; font-size:15px; font-weight:400; margin-bottom:30px; }
+  #cta {
+    background:#e0a458; color:#0e1620; font-weight:600; font-size:15px;
+    padding:14px 32px; border-radius:6px; margin-bottom:28px;
+  }
+  .keys { display:flex; gap:30px; color:#6e8497; font-size:13px; }
+  .keys b { color:#cfe0ee; display:block; font-size:15px; margin-bottom:3px; }
+  #loading { position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+    background:#0e1620; color:#8ea3b5; font-size:14px; }
+  #loading.hide { display:none; }
+
+  /* HUD durante el recorrido */
+  #hud {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    z-index:10; color:#6e8497; font-size:12px; letter-spacing:1px;
+    background:rgba(12,22,32,.6); padding:8px 18px; border-radius:20px;
+    pointer-events:none; opacity:0; transition:opacity .3s;
+  }
+  #hud.show { opacity:1; }
+  #crosshair {
+    position:fixed; top:50%; left:50%; width:6px; height:6px; margin:-3px 0 0 -3px;
+    border-radius:50%; background:rgba(224,164,88,.8); z-index:10; pointer-events:none;
+    opacity:0; transition:opacity .3s;
+  }
+  #crosshair.show { opacity:1; }
+</style>
+</head>
+<body>
+<div id="frameTop"></div>
+
+<div id="loading">Cargando casa…</div>
+
+<div id="start" class="hide">
+  <div class="eyebrow">Escaneo Polycam · recorrido en primera persona</div>
+  <h1>100 Boulder Rd, Newton</h1>
+  <h2>Caminá la casa como en un videojuego</h2>
+  <div id="cta">Clic para entrar</div>
+  <div class="keys">
+    <div><b>W A S D</b>moverte</div>
+    <div><b>Mouse</b>mirar</div>
+    <div><b>Shift</b>correr</div>
+    <div><b>Espacio</b>subir · <b>C</b> bajar</div>
+    <div><b>Esc</b>salir</div>
+  </div>
+</div>
+
+<div id="crosshair"></div>
+<div id="hud">WASD moverte · Mouse mirar · Esc salir</div>
+<div id="frameBottom"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1620);
+const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 0.01, 1000);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const d1 = new THREE.DirectionalLight(0xffffff, 1.1); d1.position.set(5,8,5); scene.add(d1);
+const d2 = new THREE.DirectionalLight(0xaaccff, 0.5); d2.position.set(-5,3,-5); scene.add(d2);
+scene.add(new THREE.HemisphereLight(0xcfe0ee, 0x33302a, 0.6));
+
+const controls = new PointerLockControls(camera, document.body);
+scene.add(controls.object);
+
+const startEl = document.getElementById("start");
+const loadingEl = document.getElementById("loading");
+const hud = document.getElementById("hud");
+const crosshair = document.getElementById("crosshair");
+
+let modelReady = false, modelRadius = 5;
+
+const loader = new GLTFLoader();
+loader.load("casa-optimizada.glb", (gltf)=>{
+  const model = gltf.scene;
+  scene.add(model);
+  // centrar el modelo en el origen y poner la cámara adentro
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  model.position.sub(center);
+  modelRadius = Math.max(size.x, size.y, size.z) * 0.5;
+  // cámara a la altura de ojos, ligeramente atrás
+  camera.position.set(0, 0, 0);
+  modelReady = true;
+  loadingEl.classList.add("hide");
+  startEl.classList.remove("hide");
+}, undefined, (e)=>{ loadingEl.textContent = "No se pudo cargar el modelo."; console.error(e); });
+
+// entrar / salir del modo recorrido
+let locked = false;   // bandera propia: no dependemos de controls.isLocked
+startEl.addEventListener("click", ()=>{ if(modelReady) controls.lock(); });
+controls.addEventListener("lock", ()=>{
+  locked = true;
+  startEl.classList.add("hide");
+  hud.classList.add("show"); crosshair.classList.add("show");
+});
+controls.addEventListener("unlock", ()=>{
+  locked = false;
+  startEl.classList.remove("hide");
+  hud.classList.remove("show"); crosshair.classList.remove("show");
+});
+
+// movimiento
+const keys = {};
+addEventListener("keydown", e=>{ keys[e.code]=true; });
+addEventListener("keyup", e=>{ keys[e.code]=false; });
+addEventListener("blur", ()=>{ for(const k in keys) keys[k]=false; });
+
+const vel = new THREE.Vector3();
+const dir = new THREE.Vector3();
+const clock = new THREE.Clock();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+
+  if(locked){
+    const base = (keys["ShiftLeft"]||keys["ShiftRight"]) ? 6 : 2.5;
+    const speed = base * modelRadius * 0.15;
+
+    dir.set(0,0,0);
+    if(keys["KeyW"]||keys["ArrowUp"]) dir.z += 1;
+    if(keys["KeyS"]||keys["ArrowDown"]) dir.z -= 1;
+    if(keys["KeyA"]||keys["ArrowLeft"]) dir.x -= 1;
+    if(keys["KeyD"]||keys["ArrowRight"]) dir.x += 1;
+    dir.normalize();
+
+    // damping
+    vel.x -= vel.x * 8 * dt;
+    vel.z -= vel.z * 8 * dt;
+    vel.y -= vel.y * 8 * dt;
+
+    if(dir.z) vel.z += dir.z * speed * dt * 8;
+    if(dir.x) vel.x += dir.x * speed * dt * 8;
+    if(keys["Space"]) vel.y += speed * dt * 8;
+    if(keys["KeyC"]) vel.y -= speed * dt * 8;
+
+    controls.moveRight(vel.x * dt);
+    controls.moveForward(vel.z * dt);
+    controls.object.position.y += vel.y * dt;
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener("resize", ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
